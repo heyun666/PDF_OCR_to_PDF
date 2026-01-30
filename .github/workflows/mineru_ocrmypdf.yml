@@ -72,7 +72,9 @@ jobs:
 
           def convert_mineru_to_hocr(mineru_output_dir, pdf_filename, hocr_output_path):
               # 读取MinerU的middle.json（核心结构化OCR输出）
-              middle_json_path = list(Path(mineru_output_dir).glob(f"*{pdf_filename}*/middle.json"))[0]
+              # 提取PDF纯文件名（去掉.pdf后缀），匹配MinerU实际输出目录
+              pdf_basename = Path(pdf_filename).stem
+              middle_json_path = Path(mineru_output_dir) / pdf_basename / "middle.json"
               with open(middle_json_path, 'r', encoding='utf-8') as f:
                   mineru_data = json.load(f)
 
