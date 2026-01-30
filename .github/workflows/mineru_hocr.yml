@@ -9,7 +9,7 @@ on:
       mineru_lang:
         description: 'MinerU OCR识别语言（如ch/en）'
         required: true
-        default: 'chi_sim+eng'
+        default: 'ch'
       output_pdf_name:
         description: '最终输出的PDF文件名'
         required: true
