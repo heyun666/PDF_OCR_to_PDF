@@ -1,0 +1,49 @@
+# 工作流名称，可自定义
+name: OCR PDF 处理 - 提取纯文本层
+# 触发规则：仅手动触发（workflow_dispatch）
+on:
+  workflow_dispatch:
+
+# 工作流执行主体
+jobs:
+  process-pdf:
+    # 指定运行系统为Ubuntu最新版（兼容apt安装）
+    runs-on: ubuntu-latest
+    steps:
+      # 步骤1：拉取当前仓库代码到运行环境（必须，用于读取仓库中的input.pdf）
+      - name: 拉取仓库代码
+        uses: actions/checkout@v4
+
+      # 步骤2：安装依赖：ghostscript + ocrmypdf（通过apt安装，Ubuntu原生支持）
+      - name: 安装ocrmypdf和ghostscript
+        run: |
+          # 更新apt源（可选，提升安装速度）
+          sudo apt update -y
+          # 安装指定依赖，自动确认安装（-y）
+          sudo apt install -y ocrmypdf ghostscript
+          # 验证安装成功（可选，打印版本，方便排错）
+          gs --version
+          ocrmypdf --version
+
+      # 步骤3：执行Ghostscript命令 - 生成text_only1.pdf
+      - name: 执行GS命令提取文本层（text_only1.pdf）
+        run: |
+          gs -q -dNOPAUSE -dBATCH -dFILTERIMAGE -sDEVICE=pdfwrite -sOutputFile=text_only1.pdf input.pdf
+
+      # 步骤4：执行OCRmyPDF命令 - 生成text_only2.pdf
+      - name: 执行OCRmyPDF命令移除背景（text_only2.pdf）
+        run: |
+          ocrmypdf --remove-background --output-type pdf input.pdf text_only2.pdf
+
+      # 步骤5：归档生成的PDF文件，提供下载（核心步骤，使用官方action实现）
+      - name: 归档产物并提供下载
+        uses: actions/upload-artifact@v4
+        with:
+          # 归档名称，可自定义（下载时显示的文件夹名）
+          name: pdf-text-only-results
+          # 要归档的文件（当前目录下的两个生成文件）
+          path: |
+            text_only1.pdf
+            text_only2.pdf
+          # 产物保留时间（可选，默认90天，可设1-90天，这里设30天）
+          retention-days: 30
