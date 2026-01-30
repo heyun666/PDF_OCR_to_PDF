@@ -77,7 +77,7 @@ jobs:
               mineru_dir = Path(mineru_output_dir)
               pdf_stem = Path(pdf_filename).stem  # 提取PDF纯文件名（如input.pdf → input）
               target_json_name = f"{pdf_stem}_middle.json"  # 官方命名：input_middle.json
-              middle_json_path = mineru_dir / target_json_name  # 完整路径：mineru_output/input_middle.json
+              middle_json_path = mineru_dir / pdf_stem / ocr / target_json_name  # 完整路径：mineru_output/input_middle.json
 
               # 打印查找信息（关键日志，用于验证）
               print(f"【MinerU官方规则】预期查找的JSON文件：{target_json_name}")
