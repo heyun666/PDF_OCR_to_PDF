@@ -47,7 +47,7 @@ jobs:
           python3 -m venv mineru-venv
           source mineru-venv/bin/activate
           pip install --upgrade pip
-          pip install mineru torch # 或从源码安装：pip install git+https://github.com/opendatalab/MinerU.git
+          pip install mineru torch doclayout_yolo # 或从源码安装：pip install git+https://github.com/opendatalab/MinerU.git
           deactivate
 
       - name: 运行MinerU执行OCR（生成结构化输出）
