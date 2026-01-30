@@ -188,61 +188,51 @@ jobs:
           
           # 3. 拆分原PDF为逐页JPG（300DPI，匹配OCR精度）
           source mineru-venv/bin/activate
-          python3 -c "
-            from pdf2image import convert_from_path
-            from pathlib import Path
-            pdf_path = '${{ github.event.inputs.pdf_file_path }}'
-            out_dir = 'hocr_pdf_work'
-            images = convert_from_path(pdf_path, dpi=300, fmt='jpg')
-            for idx, img in enumerate(images, start=1):
-                img_name = f'page_{idx:04d}.jpg'
-                img.save(Path(out_dir)/img_name, 'JPEG')
-            print(f'PDF拆分完成，生成{len(images)}张图片')
-          "
+          python3 -c "from pdf2image import convert_from_path; from pathlib import Path; pdf_path = '${{ github.event.inputs.pdf_file_path }}'; out_dir = 'hocr_pdf_work'; images = convert_from_path(pdf_path, dpi=300, fmt='jpg'); [img.save(Path(out_dir)/f'page_{idx:04d}.jpg', 'JPEG') for idx, img in enumerate(images, start=1)]; print(f'PDF拆分完成，生成{len(images)}张图片')"
           deactivate
           
           # 4. 拆分MinerU的单hocr文件为逐页hocr（和图片同名：page_0001.hocr/page_0001.jpg）
           cat > split_hocr.py << 'EOF'
-            from lxml import etree, html
-            from pathlib import Path
+          from lxml import etree, html
+          from pathlib import Path
 
-            def split_hocr(input_hocr, out_dir):
-                # 读取原始hOCR
-                parser = html.XHTMLParser()
-                tree = etree.parse(input_hocr, parser)
-                root = tree.getroot()
-                
-                # 查找所有页面节点
-                page_nodes = root.xpath('//div[contains(@class, "ocr_page")]')
-                print(f'检测到{len(page_nodes)}个页面，开始拆分')
-                
-                # 遍历页面，生成逐页hOCR
-                for idx, page in enumerate(page_nodes, start=1):
-                    page_num = f'{idx:04d}'
-                    hocr_name = f'page_{page_num}.hocr'
-                    out_path = Path(out_dir)/hocr_name
+          def split_hocr(input_hocr, out_dir):
+              # 读取原始hOCR
+              parser = html.XHTMLParser()
+              tree = etree.parse(input_hocr, parser)
+              root = tree.getroot()
+              
+              # 查找所有页面节点
+              page_nodes = root.xpath('//div[contains(@class, "ocr_page")]')
+              print(f'检测到{len(page_nodes)}个页面，开始拆分')
+              
+              # 遍历页面，生成逐页hOCR
+              for idx, page in enumerate(page_nodes, start=1):
+                  page_num = f'{idx:04d}'
+                  hocr_name = f'page_{page_num}.hocr'
+                  out_path = Path(out_dir)/hocr_name
                     
-                    # 构建单页hOCR的标准结构
-                    html_elem = etree.Element('html', nsmap=root.nsmap if root.nsmap else {})
-                    head = etree.SubElement(html_elem, 'head')
-                    meta = etree.SubElement(head, 'meta', attrib={'http-equiv': 'Content-Type', 'content': 'text/html;charset=utf-8'})
-                    body = etree.SubElement(html_elem, 'body')
-                    body.append(page)
+                  # 构建单页hOCR的标准结构
+                  html_elem = etree.Element('html', nsmap=root.nsmap if root.nsmap else {})
+                  head = etree.SubElement(html_elem, 'head')
+                  meta = etree.SubElement(head, 'meta', attrib={'http-equiv': 'Content-Type', 'content': 'text/html;charset=utf-8'})
+                  body = etree.SubElement(html_elem, 'body')
+                  body.append(page)
                     
-                    # 写入文件
-                    with open(out_path, 'wb') as f:
-                        f.write(etree.tostring(html_elem, encoding='utf-8', pretty_print=True))
-                    print(f'生成：{hocr_name}')
+                  # 写入文件
+                  with open(out_path, 'wb') as f:
+                      f.write(etree.tostring(html_elem, encoding='utf-8', pretty_print=True))
+                  print(f'生成：{hocr_name}')
                 
-                return len(page_nodes)
+              return len(page_nodes)
 
-            if __name__ == '__main__':
-                import sys
-                if len(sys.argv) != 3:
-                    print('使用：python3 split_hocr.py <输入hocr> <输出目录>')
-                    sys.exit(1)
-                split_hocr(sys.argv[1], sys.argv[2])
-            EOF
+          if __name__ == '__main__':
+              import sys
+              if len(sys.argv) != 3:
+                  print('使用：python3 split_hocr.py <输入hocr> <输出目录>')
+                  sys.exit(1)
+              split_hocr(sys.argv[1], sys.argv[2])
+          EOF
           
           # 执行拆分hOCR脚本
           source mineru-venv/bin/activate
