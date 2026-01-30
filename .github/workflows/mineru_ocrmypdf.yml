@@ -9,7 +9,7 @@ on:
       mineru_lang:
         description: 'MinerU OCR识别语言（如ch/en）'
         required: true
-        default: 'ch'
+        default: 'chi_sim+eng'
       output_pdf_name:
         description: '最终输出的PDF文件名'
         required: true
@@ -182,7 +182,7 @@ jobs:
             --skip-ocr \                  # 官方指定：跳过Tesseract OCR核心流程（关键）
             --skip-text \                 # 跳过PDF原有文本层，避免冲突
             --hocr mineru_output/ocr_result.hocr \  # 加载MinerU生成的hOCR
-            --language chi_sim \          # 统一为tesseract标准语言码（中文简体，必选）
+            --language ${{ github.event.inputs.mineru_lang }} \          # 统一为tesseract标准语言码（中文简体，必选）
             --output-type pdf \           # 显式指定输出为标准PDF（可选，兜底）
             "${{ github.event.inputs.pdf_file_path }}" \
             "${{ github.event.inputs.output_pdf_name }}"
