@@ -177,11 +177,11 @@ jobs:
           fi
 
 
-      - name: 核心步骤：将hOCR插入原PDF（hocr-pdf实现）
+      - name: 核心步骤：将hOCR插入原PDF（Python调用hocr-pdf脚本）
         run: |
-          # hocr-pdf 核心命令：hOCR文件 + 原PDF → 带文本层的新PDF
-          # --save-empty：保留无文字页面，--title：设置PDF标题
-          hocr-pdf \
+          # 关键：通过python3直接调用hocr-pdf脚本（which找到实际路径）
+          # 保留所有原参数，功能完全不变
+          python3 $(which hocr-pdf) \
             --save-empty \
             --title "MinerU OCR Result" \
             mineru_output/ocr_result.hocr \
@@ -192,6 +192,8 @@ jobs:
             echo "错误：带文本层PDF生成失败！"
             exit 1
           fi
+          # 可选：打印PDF信息，验证生成成功
+          pdfinfo "${{ github.event.inputs.output_pdf_name }}" || echo "pdfinfo未安装，跳过验证"
 
       - name: 上传产物（最终PDF+hOCR中间文件）
         uses: actions/upload-artifact@v4
