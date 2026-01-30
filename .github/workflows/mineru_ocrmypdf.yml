@@ -71,10 +71,22 @@ jobs:
           from pathlib import Path
 
           def convert_mineru_to_hocr(mineru_output_dir, pdf_filename, hocr_output_path):
+              # 新增：递归搜索整个mineru_output_dir下的middle.json，打印所有找到的路径
+              mineru_dir = Path(mineru_output_dir)
+              middle_json_list = list(mineru_dir.rglob("middle.json"))  # 递归查找所有middle.json
+              # 打印搜索结果，方便定位实际路径
+              print(f"【搜索结果】在{mineru_output_dir}下找到的middle.json文件数量：{len(middle_json_list)}")
+              for idx, file_path in enumerate(middle_json_list):
+                  print(f"【路径{idx+1}】{file_path.absolute()}")
+              
+              # 容错：未找到则抛出异常
+              if not middle_json_list:
+                  raise FileNotFoundError(f"【错误】在{mineru_output_dir}及其子目录下未找到任何middle.json文件，请检查MinerU OCR是否执行成功！")
+              # 取第一个找到的middle.json（适配MinerU任意输出目录结构）
+              middle_json_path = middle_json_list[0]
+              print(f"【最终选择】使用的middle.json路径：{middle_json_path.absolute()}")
+
               # 读取MinerU的middle.json（核心结构化OCR输出）
-              # 提取PDF纯文件名（去掉.pdf后缀），匹配MinerU实际输出目录
-              pdf_basename = Path(pdf_filename).stem
-              middle_json_path = Path(mineru_output_dir) / pdf_basename / "middle.json"
               with open(middle_json_path, 'r', encoding='utf-8') as f:
                   mineru_data = json.load(f)
 
