@@ -1,0 +1,176 @@
+name: MinerU OCR to hOCR + OCRmyPDF Processing
+on:
+  workflow_dispatch:  # 手动触发
+    inputs:
+      pdf_file_path:
+        description: '待处理的PDF文件路径（仓库内相对路径，如：input.pdf）'
+        required: true
+        default: 'input.pdf'
+      mineru_lang:
+        description: 'MinerU OCR识别语言（如ch/en）'
+        required: true
+        default: 'ch/en'
+      output_pdf_name:
+        description: '最终输出的PDF文件名'
+        required: true
+        default: 'output_ocr.pdf'
+
+jobs:
+  ocr-process:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码仓库
+        uses: actions/checkout@v4
+
+      - name: 验证输入PDF文件存在
+        run: |
+          if [ ! -f "${{ github.event.inputs.pdf_file_path }}" ]; then
+            echo "错误：指定的PDF文件 ${{ github.event.inputs.pdf_file_path }} 不存在！"
+            exit 1
+          fi
+
+      - name: 安装系统依赖
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            python3-pip \
+            python3-venv \
+            poppler-utils \
+            libtesseract-dev \
+            tesseract-ocr \
+            ocrmypdf \
+            libgl1-mesa-glx \
+            libglib2.0-0
+
+      - name: 安装MinerU
+        run: |
+          python3 -m venv mineru-venv
+          source mineru-venv/bin/activate
+          pip install --upgrade pip
+          pip install mineru  # 或从源码安装：pip install git+https://github.com/opendatalab/MinerU.git
+          deactivate
+
+      - name: 运行MinerU执行OCR（生成结构化输出）
+        run: |
+          source mineru-venv/bin/activate
+          # 创建输出目录
+          mkdir -p mineru_output
+          # 执行MinerU OCR解析
+          mineru -p "${{ github.event.inputs.pdf_file_path }}" \
+            -o mineru_output \
+            -m ocr \
+            -b pipeline \
+            -l ${{ github.event.inputs.mineru_lang }}
+          deactivate
+
+      - name: 编写MinerU转hOCR转换脚本
+        run: |
+          cat > mineru_to_hocr.py << 'EOF'
+          import json
+          import os
+          from pathlib import Path
+
+          def convert_mineru_to_hocr(mineru_output_dir, pdf_filename, hocr_output_path):
+              # 读取MinerU的middle.json（核心结构化OCR输出）
+              middle_json_path = list(Path(mineru_output_dir).glob(f"*{pdf_filename}*/middle.json"))[0]
+              with open(middle_json_path, 'r', encoding='utf-8') as f:
+                  mineru_data = json.load(f)
+
+              # hOCR模板头部
+              hocr_header = '''<?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+            "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+          <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+          <head>
+            <meta http-equiv="Content-Type" content="text/html;charset=utf-8"/>
+            <title>hOCR Output from MinerU</title>
+            <meta name='ocr-system' content='MinerU OCR'/>
+            <meta name='ocr-capabilities' content='ocr_page ocr_carea ocr_par ocr_line ocrx_word'/>
+          </head>
+          <body>
+              '''
+              hocr_footer = '''
+          </body>
+          </html>'''
+
+              hocr_content = [hocr_header]
+
+              # 遍历MinerU输出的每一页
+              for page_idx, page_data in enumerate(mineru_data.get("pages", [])):
+                  page_width = page_data.get("width", 0)
+                  page_height = page_data.get("height", 0)
+                  # 添加页面级hOCR节点
+                  hocr_content.append(f'''
+              <div class='ocr_page' id='page_{page_idx+1}' title='image "{pdf_filename}"; bbox 0 0 {page_width} {page_height}; ppageno {page_idx+1}'>
+                  <div class='ocr_carea' id='block_{page_idx+1}_1' title='bbox 0 0 {page_width} {page_height}'>
+                  ''')
+
+                  # 遍历段落/行/文字块
+                  for block in page_data.get("preproc_blocks", []):
+                      for para in block.get("para_blocks", []):
+                          for line in para.get("lines", []):
+                              line_bbox = line.get("bbox", [0,0,0,0])
+                              # 行级节点（bbox格式：x0 y0 x1 y1）
+                              hocr_content.append(f'''
+                      <div class='ocr_line' id='line_{page_idx+1}_{line.get("line_id", 0)}' title='bbox {line_bbox[0]} {line_bbox[1]} {line_bbox[2]} {line_bbox[3]}; baseline 0 -0'>
+                          ''')
+                              # 遍历每个文字span
+                              for span in line.get("spans", []):
+                                  span_bbox = span.get("bbox", [0,0,0,0])
+                                  span_text = span.get("content", "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                                  # 文字级节点
+                                  hocr_content.append(f'''
+                          <span class='ocrx_word' id='word_{page_idx+1}_{span.get("span_id", 0)}' title='bbox {span_bbox[0]} {span_bbox[1]} {span_bbox[2]} {span_bbox[3]}; x_wconf {int(span.get("score", 0)*100)}'>{span_text}</span>
+                                  ''')
+                              hocr_content.append('</div>')  # 闭合ocr_line
+
+                  hocr_content.append('</div></div>')  # 闭合ocr_carea和ocr_page
+
+              # 拼接完整hOCR内容并写入文件
+              hocr_full = "".join(hocr_content) + hocr_footer
+              with open(hocr_output_path, 'w', encoding='utf-8') as f:
+                  f.write(hocr_full)
+
+          if __name__ == "__main__":
+              import sys
+              mineru_output_dir = sys.argv[1]
+              pdf_filename = sys.argv[2]
+              hocr_output = sys.argv[3]
+              convert_mineru_to_hocr(mineru_output_dir, pdf_filename, hocr_output)
+          EOF
+
+      - name: 执行转换脚本生成hOCR文件
+        run: |
+          source mineru-venv/bin/activate
+          python3 mineru_to_hocr.py \
+            mineru_output \
+            "${{ github.event.inputs.pdf_file_path }}" \
+            mineru_output/ocr_result.hocr
+          deactivate
+          # 验证hOCR文件生成
+          if [ ! -f "mineru_output/ocr_result.hocr" ]; then
+            echo "错误：hOCR文件生成失败！"
+            exit 1
+          fi
+
+      - name: 调用OCRmyPDF（使用hOCR结果，跳过Tesseract）
+        run: |
+          ocrmypdf \
+            --skip-text \                  # 跳过原有文本提取
+            --no-tesseract \               # 禁用Tesseract OCR
+            --hocr mineru_output/ocr_result.hocr \  # 使用MinerU生成的hOCR
+            --language ${{ github.event.inputs.mineru_lang }} \
+            "${{ github.event.inputs.pdf_file_path }}" \
+            "${{ github.event.inputs.output_pdf_name }}"
+
+      - name: 上传处理后的PDF文件
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-processed-pdf
+          path: ${{ github.event.inputs.output_pdf_name }}
+
+      - name: 上传hOCR中间文件（可选）
+        uses: actions/upload-artifact@v4
+        with:
+          name: mineru-hocr-output
+          path: mineru_output/ocr_result.hocr
