@@ -38,10 +38,10 @@ jobs:
             poppler-utils \
             libgl1 \
             libglib2.0-0 \
-            ghostscript hocr-tools  # 复用gs，新增hocr-tools（核心替换工具）
+            ghostscript   # 复用gs
           # 验证关键工具安装
           gs --version
-          hocr-pdf --version  # 验证hocr-tools核心命令			
+
 
       - name: 安装MinerU
         run: |
@@ -49,7 +49,7 @@ jobs:
           source mineru-venv/bin/activate
           pip install --upgrade pip
           pip install uv
-          uv pip install -U mineru[all] torch doclayout_yolo ultralytics # 或从源码安装：pip install git+https://github.com/opendatalab/MinerU.git
+          uv pip install -U mineru[all] torch doclayout_yolo ultralytics  hocr-tools # 或从源码安装：pip install git+https://github.com/opendatalab/MinerU.git
           deactivate
 
       - name: 运行MinerU执行OCR（生成结构化输出）
