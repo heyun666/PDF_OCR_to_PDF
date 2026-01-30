@@ -39,7 +39,7 @@ jobs:
             libtesseract-dev \
             tesseract-ocr \
             ocrmypdf \
-            libgl1-mesa-glx \
+            libgl1 \
             libglib2.0-0
 
       - name: 安装MinerU
