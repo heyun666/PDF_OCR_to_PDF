@@ -88,6 +88,7 @@ jobs:
           }
 
           cl /nologo /EHsc /std:c++17 /MD /O2 /W3 `
+             /utf-8 `
              /DUNICODE /D_UNICODE `
              /DNOMINMAX `
              /D_CRT_SECURE_NO_WARNINGS `
