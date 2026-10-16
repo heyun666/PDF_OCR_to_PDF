@@ -1,8 +1,18 @@
 // =============================================================================
 //  PatchRSA OneByte - Cross-platform C++ reproduction + Win32 GUI
 // =============================================================================
-#define NOMINMAX
-#define _CRT_SECURE_NO_WARNINGS
+
+// --- 强制 Unicode（必须在包含 windows.h 之前）---
+#ifndef UNICODE
+#define UNICODE
+#endif
+#ifndef _UNICODE
+#define _UNICODE
+#endif
+
+// --- 这两个可以由编译命令 /D 传入，这里不再重复定义，避免 C4005 ---
+// #define NOMINMAX
+// #define _CRT_SECURE_NO_WARNINGS
 
 #include <cstdio>
 #include <cstdlib>
@@ -50,8 +60,10 @@ using std11::make_unique;
 // ---------------------------------------------------------------------------
 #if defined(_WIN32)
   #include <windows.h>
+  #include <windowsx.h>     // <-- 新增：Button_GetCheck / Button_SetCheck 等
   #include <commctrl.h>
   #include <shellapi.h>
+  #include <shlobj.h>       // <-- 新增：BROWSEINFOW / SHBrowseForFolderW / LPITEMIDLIST / BIF_*
   #include <io.h>
   #include <fcntl.h>
   #include <direct.h>
@@ -1029,7 +1041,8 @@ static std::string pick_folder() {
     if (!pidl) return "";
     wchar_t path[MAX_PATH] = {};
     SHGetPathFromIDListW(pidl, path);
-    CoTaskMemFree(pidl);
+    //CoTaskMemFree(pidl); // 需要 ole32.lib，或者用 ILFree(pidl)（只需 shell32.lib）
+    ILFree(pidl);
     return to_u8(path);
 }
 
