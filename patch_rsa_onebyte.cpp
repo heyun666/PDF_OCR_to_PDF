@@ -67,6 +67,7 @@ using std11::make_unique;
   #include <io.h>
   #include <fcntl.h>
   #include <direct.h>
+  #include <commdlg.h>      // <-- 新增：GetOpenFileNameW / OPENFILENAMEW
 
   static FILE* fopen_utf8(const char* path, const char* mode) {
       int wlen = MultiByteToWideChar(CP_UTF8, 0, path, -1, nullptr, 0);
@@ -225,16 +226,37 @@ struct RsaKeyInfo {
 static bool parse_spki(const std::string& pem_text, std::string& n_hex, std::string& e_hex) {
     BIO* bio = BIO_new_mem_buf(pem_text.data(), (int)pem_text.size());
     if (!bio) return false;
+
     EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
-    BIO_free(bio);
-    if (!pkey) return false;
-    BIGNUM* n_bn = nullptr;
-    BIGNUM* e_bn = nullptr;
+    if (!pkey) {
+        // 回退到 RSA PUBLIC KEY
+        BIO_reset(bio);
+        RSA* rsa = PEM_read_bio_RSA_PUBKEY(bio, nullptr, nullptr, nullptr);
+        if (rsa) {
+            const BIGNUM *n_bn, *e_bn;
+            RSA_get0_key(rsa, &n_bn, &e_bn, nullptr);
+            char* n_str = BN_bn2hex(n_bn);
+            char* e_str = BN_bn2hex(e_bn);
+            n_hex = n_str;
+            e_hex = e_str;
+            OPENSSL_free(n_str);
+            OPENSSL_free(e_str);
+            RSA_free(rsa);
+            BIO_free(bio);
+            return true;
+        }
+        BIO_free(bio);
+        return false;
+    }
+
     RSA* rsa = EVP_PKEY_get1_RSA(pkey);
     EVP_PKEY_free(pkey);
-    if (!rsa) return false;
-    RSA_get0_key(rsa, (const BIGNUM**)&n_bn, (const BIGNUM**)&e_bn, nullptr);
-    if (!n_bn || !e_bn) { RSA_free(rsa); return false; }
+    if (!rsa) { BIO_free(bio); return false; }
+
+    const BIGNUM *n_bn, *e_bn;
+    RSA_get0_key(rsa, &n_bn, &e_bn, nullptr);
+    if (!n_bn || !e_bn) { RSA_free(rsa); BIO_free(bio); return false; }
+
     char* n_str = BN_bn2hex(n_bn);
     char* e_str = BN_bn2hex(e_bn);
     n_hex = n_str;
@@ -242,6 +264,7 @@ static bool parse_spki(const std::string& pem_text, std::string& n_hex, std::str
     OPENSSL_free(n_str);
     OPENSSL_free(e_str);
     RSA_free(rsa);
+    BIO_free(bio);
     return true;
 }
 
@@ -293,57 +316,161 @@ static bool parse_raw_n(const std::string& input, std::string& n_hex) {
     return true;
 }
 
+static std::string strip_ws(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char c : s) {
+        if (!isspace(c)) out += (char)c;
+    }
+    return out;
+}
+
 static bool parse_public_key(const std::string& input, std::string& n_hex, std::string& e_hex) {
     n_hex.clear();
     e_hex.clear();
 
     std::string content = input;
+
+    // 1) 如果 input 是文件路径，读取文件内容
     {
         FILE* f = fopen_utf8(input.c_str(), "rb");
         if (f) {
             fseek(f, 0, SEEK_END);
             long sz = ftell(f);
             fseek(f, 0, SEEK_SET);
-            content.resize(sz);
-            fread(&content[0], 1, sz, f);
+            if (sz > 0) {
+                content.resize(sz);
+                fread(&content[0], 1, sz, f);
+            } else {
+                content.clear();
+            }
             fclose(f);
         }
     }
 
+    // 2) PEM（-----BEGIN ...-----）优先
     if (content.find("-----BEGIN") != std::string::npos) {
         if (parse_spki(content, n_hex, e_hex)) return true;
+        // 有些 PEM 是 RSA PUBLIC KEY / RSA PRIVATE KEY，可继续尝试
+        {
+            BIO* bio = BIO_new_mem_buf(content.data(), (int)content.size());
+            if (bio) {
+                EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+                if (!pkey) {
+                    // 尝试 RSA PUBLIC KEY
+                    RSA* rsa = PEM_read_bio_RSA_PUBKEY(bio, nullptr, nullptr, nullptr);
+                    if (rsa) {
+                        const BIGNUM *n_bn, *e_bn;
+                        RSA_get0_key(rsa, &n_bn, &e_bn, nullptr);
+                        char* n_str = BN_bn2hex(n_bn);
+                        char* e_str = BN_bn2hex(e_bn);
+                        n_hex = n_str;
+                        e_hex = e_str;
+                        OPENSSL_free(n_str);
+                        OPENSSL_free(e_str);
+                        RSA_free(rsa);
+                        BIO_free(bio);
+                        return true;
+                    }
+                } else {
+                    RSA* rsa = EVP_PKEY_get1_RSA(pkey);
+                    EVP_PKEY_free(pkey);
+                    if (rsa) {
+                        const BIGNUM *n_bn, *e_bn;
+                        RSA_get0_key(rsa, &n_bn, &e_bn, nullptr);
+                        char* n_str = BN_bn2hex(n_bn);
+                        char* e_str = BN_bn2hex(e_bn);
+                        n_hex = n_str;
+                        e_hex = e_str;
+                        OPENSSL_free(n_str);
+                        OPENSSL_free(e_str);
+                        RSA_free(rsa);
+                        BIO_free(bio);
+                        return true;
+                    }
+                }
+                BIO_free(bio);
+            }
+        }
     }
-    if (content.substr(0, 7) == "ssh-rsa") {
-        return parse_openssh(content, n_hex, e_hex);
-    }
+
+    // 3) OpenSSH（ssh-rsa AAAA...）
     {
-        auto der = base64_decode(content);
-        if (!der.empty()) {
-            BIO* bio = BIO_new_mem_buf(der.data(), (int)der.size());
-            EVP_PKEY* pkey = d2i_PUBKEY_bio(bio, nullptr);
-            BIO_free(bio);
-            if (pkey) {
-                RSA* rsa = EVP_PKEY_get1_RSA(pkey);
-                EVP_PKEY_free(pkey);
-                if (rsa) {
-                    const BIGNUM *n_bn, *e_bn;
-                    RSA_get0_key(rsa, &n_bn, &e_bn, nullptr);
-                    char* n_str = BN_bn2hex(n_bn);
-                    char* e_str = BN_bn2hex(e_bn);
-                    n_hex = n_str;
-                    e_hex = e_str;
-                    OPENSSL_free(n_str);
-                    OPENSSL_free(e_str);
-                    RSA_free(rsa);
-                    return true;
+        std::string trimmed = content;
+        // 去掉前导空白
+        size_t p = trimmed.find_first_not_of(" \t\r\n");
+        if (p != std::string::npos) trimmed = trimmed.substr(p);
+        if (trimmed.substr(0, 7) == "ssh-rsa") {
+            if (parse_openssh(trimmed, n_hex, e_hex)) return true;
+        }
+    }
+
+    // 4) 裸 base64（可能带换行/缩进）→ DER
+    {
+        std::string b64 = strip_ws(content);
+        // 去掉可能的 data: 前缀
+        if (b64.rfind("data:", 0) == 0) {
+            size_t comma = b64.find(',');
+            if (comma != std::string::npos) b64 = b64.substr(comma + 1);
+        }
+        if (!b64.empty()) {
+            auto der = base64_decode(b64);
+            if (!der.empty()) {
+                BIO* bio = BIO_new_mem_buf(der.data(), (int)der.size());
+                if (bio) {
+                    EVP_PKEY* pkey = d2i_PUBKEY_bio(bio, nullptr);
+                    if (!pkey) {
+                        // 尝试 RSAPublicKey
+                        RSA* rsa = d2i_RSAPublicKey_bio(bio, nullptr);
+                        if (rsa) {
+                            const BIGNUM *n_bn, *e_bn;
+                            RSA_get0_key(rsa, &n_bn, &e_bn, nullptr);
+                            char* n_str = BN_bn2hex(n_bn);
+                            char* e_str = BN_bn2hex(e_bn);
+                            n_hex = n_str;
+                            e_hex = e_str;
+                            OPENSSL_free(n_str);
+                            OPENSSL_free(e_str);
+                            RSA_free(rsa);
+                            BIO_free(bio);
+                            return true;
+                        }
+                    } else {
+                        RSA* rsa = EVP_PKEY_get1_RSA(pkey);
+                        EVP_PKEY_free(pkey);
+                        if (rsa) {
+                            const BIGNUM *n_bn, *e_bn;
+                            RSA_get0_key(rsa, &n_bn, &e_bn, nullptr);
+                            char* n_str = BN_bn2hex(n_bn);
+                            char* e_str = BN_bn2hex(e_bn);
+                            n_hex = n_str;
+                            e_hex = e_str;
+                            OPENSSL_free(n_str);
+                            OPENSSL_free(e_str);
+                            RSA_free(rsa);
+                            BIO_free(bio);
+                            return true;
+                        }
+                    }
+                    BIO_free(bio);
                 }
             }
         }
     }
-    if (parse_raw_n(content, n_hex)) {
-        e_hex = "10001";
-        return true;
+
+    // 5) 裸 N（hex，允许空白/换行/冒号/逗号等）
+    {
+        std::string s;
+        for (unsigned char c : content) {
+            if (isxdigit(c)) s += (char)tolower(c);
+        }
+        if (!s.empty()) {
+            n_hex = s;
+            e_hex = "10001";
+            return true;
+        }
     }
+
     return false;
 }
 
@@ -738,6 +865,7 @@ static void export_keys(const RsaSolution& sol, const BigNum& E,
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
+#pragma comment(lib, "comdlg32.lib")   // <-- 新增：GetOpenFileNameW / GetSaveFileNameW
 
 // Control IDs
 #define IDC_EDIT_INPUT        1001
@@ -763,6 +891,7 @@ static void export_keys(const RsaSolution& sol, const BigNum& E,
 #define IDC_TAB_DETAIL        1021
 #define IDC_EDIT_DETAIL       1022
 #define IDC_STATIC_STATUS     1023
+#define IDC_BTN_IMPORT_FILE   1024
 
 static HINSTANCE g_hInst = nullptr;
 static HWND g_hMain = nullptr;
@@ -1129,6 +1258,7 @@ static void layout(HWND h) {
     // Left column: input + params
     MoveWindow(g_hEditInput, pad, y + 20, leftW, 90, TRUE);
     MoveWindow(GetDlgItem(h, IDC_BTN_PARSE), pad, y + 118, 100, 26, TRUE);
+    MoveWindow(GetDlgItem(h, IDC_BTN_IMPORT_FILE), pad + 110, y + 118, 100, 26, TRUE);
     MoveWindow(g_hLabelN, pad + 110, y + 118, leftW - 110, 26, TRUE);
     MoveWindow(g_hLabelE, pad + 110, y + 148, leftW - 110, 26, TRUE);
     y += 180;
@@ -1179,6 +1309,20 @@ static void layout(HWND h) {
     MoveWindow(g_hStatus, pad, H - 22, W - pad * 2, 20, TRUE);
 }
 
+static std::string open_file_dialog() {
+    wchar_t filename[MAX_PATH] = {};
+    OPENFILENAMEW ofn = {};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g_hMain;
+    ofn.lpstrFilter = L"公钥文件 (*.pem;*.pub;*.txt;*.*)\0*.pem;*.pub;*.txt;*.*\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = filename;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+    ofn.lpstrTitle = L"选择公钥文件";
+    if (!GetOpenFileNameW(&ofn)) return "";
+    return to_u8(filename);
+}
+
 // -------- Window proc --------
 static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
@@ -1193,9 +1337,13 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
             WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL,
             8, 28, 460, 90, h, (HMENU)IDC_EDIT_INPUT, hi, nullptr);
 
+        CreateWindowW(L"BUTTON", L"从文件导入",
+            WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+            8, 126, 100, 26, h, (HMENU)IDC_BTN_IMPORT_FILE, hi, nullptr);
+            
         CreateWindowW(L"BUTTON", L"解析公钥",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-            8, 126, 100, 26, h, (HMENU)IDC_BTN_PARSE, hi, nullptr);
+            8, 156, 100, 26, h, (HMENU)IDC_BTN_PARSE, hi, nullptr);
 
         g_hLabelN = CreateWindowW(L"STATIC", L"N(hex): ",
             WS_CHILD | WS_VISIBLE | SS_LEFT,
@@ -1325,6 +1473,20 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         case IDC_BTN_PARSE:
             if (code == BN_CLICKED) on_parse();
             break;
+        case IDC_BTN_IMPORT_FILE:
+            if (code == BN_CLICKED) {
+                std::string path = open_file_dialog();
+                if (!path.empty()) {
+                    std::string data = read_file_utf8(path);
+                    if (data.empty()) {
+                        MessageBoxW(g_hMain, L"读取文件失败或文件为空。", L"错误", MB_ICONERROR);
+                    } else {
+                        set_text_u8(g_hEditInput, data);
+                        set_status("已导入文件: " + path);
+                    }
+                }
+            }
+            break;            
         case IDC_BTN_SCAN:
             if (code == BN_CLICKED) on_scan();
             break;
