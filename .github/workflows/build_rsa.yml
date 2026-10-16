@@ -1,10 +1,6 @@
 name: Build patch_rsa_onebyte (MSVC x64)
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -36,12 +32,12 @@ jobs:
             vcpkg-${{ runner.os }}-x64-windows-
 
       # ---------------------------------------------------------------
-      # 通过 vcpkg 安装 gmp 和 openssl（x64-windows 三元组）
+      # 通过 vcpkg 安装  openssl（x64-windows 三元组）
       # ---------------------------------------------------------------
       - name: Install dependencies via vcpkg
         shell: pwsh
         run: |
-          & "$env:VCPKG_ROOT\vcpkg.exe" install gmp:x64-windows openssl:x64-windows
+          & "$env:VCPKG_ROOT\vcpkg.exe" install openssl:x64-windows
 
       # ---------------------------------------------------------------
       # 配置 MSVC 环境变量 (cl.exe, link.exe 等)
@@ -67,10 +63,10 @@ jobs:
              /Fe:patch_rsa_onebyte.exe ^
              /link ^
              /LIBPATH:"%VCPKG_ROOT%\installed\x64-windows\lib" ^
-             libcrypto.lib gmp.lib
+             libcrypto.lib
 
       # ---------------------------------------------------------------
-      # 收集运行时依赖的 DLL (OpenSSL / GMP) 供后续验证或打包
+      # 收集运行时依赖的 DLL (OpenSSL) 供后续验证或打包
       # ---------------------------------------------------------------
       - name: Copy runtime DLLs
         shell: pwsh
@@ -79,7 +75,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item patch_rsa_onebyte.exe dist\
           Get-ChildItem "$bin\*.dll" | Where-Object {
-              $_.Name -match '^(libcrypto|libssl|gmp)' 
+              $_.Name -match '^(libcrypto|libssl)' 
           } | Copy-Item -Destination dist\
           Get-ChildItem dist
 
