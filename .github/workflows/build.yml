@@ -1,0 +1,107 @@
+name: Build patch_rsa_onebyte (MSVC x64)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------------------------------------------------------------
+      # 定位 vcpkg（优先用 runner 自带的 VCPKG_INSTALLATION_ROOT）
+      # ---------------------------------------------------------------
+      - name: Setup vcpkg
+        shell: pwsh
+        run: |
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if (-not $vcpkgRoot) { $vcpkgRoot = "C:\vcpkg" }
+          if (-not (Test-Path "$vcpkgRoot\vcpkg.exe")) {
+            Write-Error "vcpkg.exe not found under $vcpkgRoot"
+            exit 1
+          }
+          Write-Host "Using vcpkg at: $vcpkgRoot"
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          & "$vcpkgRoot\vcpkg.exe" version
+
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg\installed
+          key: vcpkg-${{ runner.os }}-x64-windows-${{ hashFiles('.github/workflows/build.yml') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-x64-windows-
+
+      # ---------------------------------------------------------------
+      # 安装 gmp 和 openssl（x64-windows）
+      # ---------------------------------------------------------------
+      - name: Install dependencies via vcpkg
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_ROOT\vcpkg.exe" install gmp:x64-windows openssl:x64-windows
+          Write-Host "=== Listing gmp headers ==="
+          Get-ChildItem "$env:VCPKG_ROOT\installed\x64-windows\include" -Filter "gmp*.h" -ErrorAction SilentlyContinue
+          Write-Host "=== Listing openssl headers ==="
+          Get-ChildItem "$env:VCPKG_ROOT\installed\x64-windows\include\openssl" -Filter "rsa.h" -ErrorAction SilentlyContinue
+
+      # ---------------------------------------------------------------
+      # MSVC 环境
+      # ---------------------------------------------------------------
+      - name: Setup MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # ---------------------------------------------------------------
+      # 编译（使用 pwsh，通过环境变量把路径传给 cl.exe）
+      # ---------------------------------------------------------------
+      - name: Compile with MSVC (cl.exe)
+        shell: pwsh
+        run: |
+          $vcpkgRoot = $env:VCPKG_ROOT
+          $inc  = "$vcpkgRoot\installed\x64-windows\include"
+          $lib  = "$vcpkgRoot\installed\x64-windows\lib"
+
+          Write-Host "VCPKG_ROOT = $vcpkgRoot"
+          Write-Host "Include dir exists: $(Test-Path $inc) -> $inc"
+          Write-Host "Lib dir exists:     $(Test-Path $lib) -> $lib"
+
+          if (-not (Test-Path "$inc\gmp.h")) {
+            Write-Error "gmp.h not found in $inc — vcpkg install may have failed"
+            Get-ChildItem "$vcpkgRoot\installed\x64-windows\include" | Select-Object -First 50
+            exit 1
+          }
+
+          cl /nologo /EHsc /std:c++17 /MD /O2 /W3 `
+             /I"$inc" `
+             patch_rsa_onebyte.cpp `
+             /Fe:patch_rsa_onebyte.exe `
+             /link `
+             /LIBPATH:"$lib" `
+             libcrypto.lib gmp.lib
+
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # ---------------------------------------------------------------
+      # 收集运行时 DLL
+      # ---------------------------------------------------------------
+      - name: Copy runtime DLLs
+        shell: pwsh
+        run: |
+          $bin = "$env:VCPKG_ROOT\installed\x64-windows\bin"
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item patch_rsa_onebyte.exe dist\
+          Get-ChildItem "$bin\*.dll" | Where-Object {
+              $_.Name -match '^(libcrypto|libssl|gmp)'
+          } | Copy-Item -Destination dist\
+          Get-ChildItem dist
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: patch_rsa_onebyte-windows-x64
+          path: dist/
+          if-no-files-found: error
