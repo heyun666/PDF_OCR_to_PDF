@@ -93,7 +93,7 @@ jobs:
              /Fe:patch_rsa_onebyte.exe `
              /link `
              /LIBPATH:"$lib" `
-             libcrypto.lib gmp.lib
+             libcrypto.lib gmp.lib  shell32.lib  advapi32.lib crypt32.lib user32.lib ws2_32.lib
 
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
