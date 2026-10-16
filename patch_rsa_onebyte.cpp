@@ -10,7 +10,7 @@
 //                GMP (libgmp) for arbitrary-precision arithmetic.
 // =============================================================================
 #define NOMINMAX
-#define WIN32_LEAN_AND_MEAN
+
 
 #include <cstdio>
 #include <cstdlib>
