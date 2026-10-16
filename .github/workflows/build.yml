@@ -1,4 +1,4 @@
-name: Build patch_rsa_onebyte (MSVC x64)
+name: Build patch_rsa_onebyte (MSVC x64)- GUI
 
 on:
   workflow_dispatch:
@@ -88,12 +88,15 @@ jobs:
           }
 
           cl /nologo /EHsc /std:c++17 /MD /O2 /W3 `
+             /DNOMINMAX /D_CRT_SECURE_NO_WARNINGS /DOPENSSL_SUPPRESS_DEPRECATED `
              /I"$inc" `
              patch_rsa_onebyte.cpp `
              /Fe:patch_rsa_onebyte.exe `
              /link `
+             /SUBSYSTEM:WINDOWS `
+             /ENTRY:wWinMainCRTStartup `
              /LIBPATH:"$lib" `
-             libcrypto.lib gmp.lib  shell32.lib  advapi32.lib crypt32.lib user32.lib ws2_32.lib
+             libcrypto.lib gmp.lib shell32.lib comctl32.lib user32.lib gdi32.lib
 
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
